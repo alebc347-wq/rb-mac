@@ -1,76 +1,128 @@
 #!/bin/zsh
 
-# --- 1. 自動檢查並請求管理員權限 ---
+# --- 1. 版本與資訊 ---
+# RB 極致省電優化工具 (macOS 穩定版 v3.0)
+# 修正了對 Intel/Apple Silicon 晶片的兼容性，並強化了 Finder 重啟邏輯。
+
+# --- 2. 自動檢查並請求管理員權限 ---
 if [[ $EUID -ne 0 ]]; then
-   echo "正在請求管理員 (sudo) 權限以執行系統優化..."
-   sudo -v
-   # 保持 sudo 權限直到腳本結束
-   while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+    echo "==========================================="
+    echo "      正在請求管理員 (sudo) 權限..."
+    echo "==========================================="
+    if sudo -v; then
+        # 在背景持續更新 sudo 認證，直到腳本結束
+        while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+    else
+        echo "錯誤：未取得管理員權限，無法執行系統層級優化。"
+        exit 1
+    fi
 fi
 
-# --- 2. 主選單 ---
+# --- 3. 系統環境檢查 ---
+OS_VERSION=$(sw_vers -productVersion | cut -d. -f1)
+IS_SUPPORT_LOWPOWER=false
+if [ "$OS_VERSION" -ge 12 ]; then
+    IS_SUPPORT_LOWPOWER=true
+fi
+
+# --- 4. 功能函式庫 ---
+
+# 恢復系統標準環境
+restore_env() {
+    echo "正在恢復系統環境中..."
+    # 恢復 Finder
+    launchctl load -w /System/Library/LaunchAgents/com.apple.finder.plist 2>/dev/null
+    open /System/Library/CoreServices/Finder.app 2>/dev/null
+    
+    # 恢復電源設定 (平衡)
+    if $IS_SUPPORT_LOWPOWER; then
+        sudo pmset -a lowpower 0
+    fi
+    sudo pmset -a powernap 1
+    sudo pmset -a displaysleep 10
+    sudo pmset -a disksleep 10
+    sudo pmset -a lessbright 0
+    echo "系統環境已恢復正常。"
+}
+
+# 捕捉中斷訊號 (如 Ctrl+C)，確保意外退出時恢復 Finder
+trap "restore_env; exit" INT TERM
+
+# 查看當前電力狀態
+check_status() {
+    echo "--- 當前電源狀態 ---"
+    pmset -g live | grep -E "(lowpower|displaysleep|disksleep)"
+    echo "-------------------"
+}
+
+# --- 5. 主選單 ---
 show_menu() {
     clear
     echo "==========================================="
-    echo "      RB 專用極簡省電工具 (macOS v1.0)"
+    echo "      RB 專用極簡省電工具 (macOS Stable)"
     echo "==========================================="
-    echo "1. 徹底關閉 Finder (桌面消失/省電)"
-    echo "2. 恢復 Finder (顯示桌面)"
-    echo "3. 終極優化 (低耗電模式 + 系統限制)"
-    echo "4. 恢復正常 (標準模式)"
-    echo "5. 退出"
+    echo " 1. [極致] 徹底關閉 Finder (桌面消失)"
+    echo " 2. [恢復] 啟動 Finder (還原桌面)"
+    echo " 3. [優化] 終極省電 (開啟 Low Power Mode)"
+    echo " 4. [標準] 恢復正常 (預設平衡模式)"
+    echo " 5. [查詢] 顯示當前電源設定狀態"
+    echo " 6. [退出] 安全關閉"
     echo "==========================================="
+    if ! $IS_SUPPORT_LOWPOWER; then
+        echo "注意：當前系統版本過低，不支援內建低耗電模式。"
+    fi
 }
 
+# --- 6. 主程式迴圈 ---
 while true; do
     show_menu
-    printf "請輸入選項 (1-5): "
-    read Selection
+    read "Selection?請選擇操作 (1-6): "
+    echo ""
 
     case $Selection in
         1)
-            echo "正在停用 Finder 自動重啟並關閉..."
-            # 停止 Finder 的自動啟動機制
+            echo "執行中：正在停止 Finder 管理程序..."
             launchctl unload -w /System/Library/LaunchAgents/com.apple.finder.plist 2>/dev/null
             killall Finder 2>/dev/null
-            echo "成功：Finder 已關閉（桌面圖示與視窗將消失）。"
-            read -n 1 -s -p "按任意鍵繼續..."
+            echo "成功：Finder 已停用，釋放 GUI 渲染資源。"
+            read -k 1 "tmp?按任意鍵繼續..."
             ;;
         2)
-            echo "正在恢復 Finder..."
-            # 重新加載 Finder 機制
+            echo "執行中：正在恢復 Finder..."
             launchctl load -w /System/Library/LaunchAgents/com.apple.finder.plist 2>/dev/null
-            open /System/Library/CoreServices/Finder.app
-            echo "成功：Finder 已恢復。"
-            read -n 1 -s -p "按任意鍵繼續..."
+            open /System/Library/CoreServices/Finder.app 2>/dev/null
+            echo "成功：桌面已還原。"
+            read -k 1 "tmp?按任意鍵繼續..."
             ;;
         3)
-            echo "正在套用 macOS 低耗電優化..."
-            # 開啟低耗電模式 (macOS Monterey 12.0+)
-            sudo pmset -a lowpower 1
-            # 減少螢幕亮度與休眠等待時間
+            echo "執行中：正在套用極限省電參數..."
+            if $IS_SUPPORT_LOWPOWER; then
+                sudo pmset -a lowpower 1
+            fi
+            sudo pmset -a powernap 0
             sudo pmset -a displaysleep 2
             sudo pmset -a disksleep 5
-            # 關閉藍牙 (省電大戶，如需使用請手動開啟)
-            # blueutil --power 0 (需安裝 blueutil，此處先跳過)
-            echo "成功：已切換至低耗電模式 (Low Power Mode)。"
-            read -n 1 -s -p "按任意鍵繼續..."
+            sudo pmset -a lessbright 1
+            echo "成功：系統已進入低功耗狀態。"
+            read -k 1 "tmp?按任意鍵繼續..."
             ;;
         4)
-            echo "正在恢復標準模式..."
-            sudo pmset -a lowpower 0
-            sudo pmset -a displaysleep 10
-            sudo pmset -a disksleep 10
-            echo "成功：系統已恢復預設平衡狀態。"
-            read -n 1 -s -p "按任意鍵繼續..."
+            echo "執行中：正在還原平衡模式..."
+            restore_env
+            read -k 1 "tmp?按任意鍵繼續..."
             ;;
         5)
-            # 退出前確保 Finder 機制是正常的
+            check_status
+            read -k 1 "tmp?按任意鍵繼續..."
+            ;;
+        6)
+            echo "正在安全退出..."
+            # 確保 Finder 有被載入後才結束
             launchctl load -w /System/Library/LaunchAgents/com.apple.finder.plist 2>/dev/null
             exit 0
             ;;
         *)
-            echo "錯誤：無效的選項！"
+            echo "錯誤：輸入無效。"
             sleep 1
             ;;
     esac
